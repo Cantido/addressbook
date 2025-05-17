@@ -93,7 +93,7 @@ fn main() -> anyhow::Result<()> {
         table_builder.push_record(headers);
     }
 
-    contacts
+    let rows: Vec<Vec<&str>> = contacts
         .iter()
         .map(|vcard| {
             cli.property
@@ -107,9 +107,16 @@ fn main() -> anyhow::Result<()> {
                 })
                 .collect()
         })
-        .for_each(|row: Vec<&str>| {
-            table_builder.push_record(row);
-        });
+        .filter(|row: &Vec<&str>| row.iter().any(|&s| !s.is_empty()))
+        .collect();
+
+    if rows.len() == 0 {
+        return Ok(());
+    }
+
+    for row in rows {
+        table_builder.push_record(row);
+    }
 
     let mut table = table_builder.build();
 
