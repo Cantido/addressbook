@@ -2,6 +2,7 @@ use std::fs;
 use std::io::{self, stdout};
 use std::path::PathBuf;
 
+use anyhow::{anyhow, Result};
 use calcard::vcard::{VCard, VCardProperty};
 use calcard::Entry;
 use clap::Parser;
@@ -16,6 +17,10 @@ use thiserror::Error;
 struct Cli {
     /// Contact vCards to read
     vcards: Vec<PathBuf>,
+
+    /// Contact properties to print
+    #[arg(short, long, value_parser = property_name_parser, default_values = vec!["FN", "TEL"])]
+    property: Vec<VCardProperty>,
 }
 
 #[derive(Error, Debug, Diagnostic)]
@@ -28,9 +33,10 @@ pub enum AddressBookError {
         #[source]
         cause: io::Error,
     },
-    #[error("vCard property {:?} is required", property.as_str())]
-    #[diagnostic(code(addressbook::missing_required_property))]
-    MissingRequiredProperty { property: VCardProperty },
+}
+
+fn property_name_parser(s: &str) -> Result<VCardProperty> {
+    VCardProperty::try_from(s.as_bytes()).map_err(|_e| anyhow!("Unrecognized property name"))
 }
 
 fn main() -> anyhow::Result<()> {
@@ -79,34 +85,29 @@ fn main() -> anyhow::Result<()> {
         return Ok(());
     }
 
-    let mut table_builder = Builder::with_capacity(contacts.len(), 2);
+    let mut table_builder = Builder::with_capacity(contacts.len(), cli.property.len());
 
-    table_builder.push_record(["Name", "Phone"]);
+    let headers = cli.property.iter().map(|prop| prop.as_str());
+
+    if stdout().is_tty() {
+        table_builder.push_record(headers);
+    }
 
     contacts
         .iter()
-        .filter_map(|vcard| {
-            let name_result = vcard
-                .property(&VCardProperty::Fn)
-                .and_then(|p| p.values.first())
-                .and_then(|p| p.as_text())
-                .ok_or(AddressBookError::MissingRequiredProperty {
-                    property: VCardProperty::Fn,
-                });
-
-            let phone = vcard.property(&VCardProperty::Tel).map_or("", |p| {
-                p.values.first().and_then(|p| p.as_text()).unwrap_or("")
-            });
-
-            match name_result.into_diagnostic() {
-                Ok(name) => Some([name, phone]),
-                Err(e) => {
-                    error!("{:?}", e);
-                    None
-                }
-            }
+        .map(|vcard| {
+            cli.property
+                .iter()
+                .map(|prop| {
+                    vcard
+                        .property(&prop)
+                        .and_then(|p| p.values.first())
+                        .and_then(|p| p.as_text())
+                        .unwrap_or("")
+                })
+                .collect()
         })
-        .for_each(|row| {
+        .for_each(|row: Vec<&str>| {
             table_builder.push_record(row);
         });
 
